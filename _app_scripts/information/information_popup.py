@@ -1016,6 +1016,9 @@ def _schedule_revealed_session_history_publish():
 def toggle_title_popup(show, info_type=None, instant=False):
     """Creates or destroys the title popup at the bottom middle of the screen."""
     global _title_popup_info_type_cache, _title_popup_last_mpv_size, _title_popup_anim_args
+    entry = state.playback.currently_playing.get("playlist_entry")
+    looter = entry.get("looted_by") if show and isinstance(entry, dict) else None
+    web_server.push_looting_credit(looter)
     if show:
         _already_up = state.info_display._title_popup_intent  # True when switching info type while popup is already visible
         _title_popup_info_type_cache = info_type
@@ -1284,6 +1287,10 @@ def toggle_title_popup(show, info_type=None, instant=False):
                     alternate_title = japanese_title
     else:
         title_row = state.playback.currently_playing.get("filename", "No Media Playing").split(".")[0]
+
+    if looter:
+        credit = f"Looted by {looter}"
+        top_row = f"{top_row}\n{credit}" if top_row else credit
 
     if not _already_up:
         _title_popup_slide_in(top_row, title_row, bottom_row, bg_color, fg_color,

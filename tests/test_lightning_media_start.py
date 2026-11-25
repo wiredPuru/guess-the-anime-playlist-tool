@@ -37,6 +37,20 @@ class _DeferredRoot:
         return len(self.callbacks)
 
 
+def test_drafted_song_loads_from_zero_with_cover_and_music(monkeypatch):
+    events = []
+    monkeypatch.setattr(transport.state.widgets, "player", _OrderedPlayer(events))
+    monkeypatch.setattr(transport.state.lightning, "light_mode", None)
+    monkeypatch.setattr(
+        blind_screen, "set_black_screen",
+        lambda toggle, **kwargs: events.append(("cover", toggle)),
+    )
+
+    transport._load_incoming_media("theme.webm", start_seconds=0, cover_reveal=True)
+
+    assert events == [("cover", True), ("load", "theme.webm", 0, True)]
+
+
 def test_muted_lightning_media_is_muted_before_load(monkeypatch):
     player = _Player()
     monkeypatch.setattr(transport.state.widgets, "player", player)

@@ -184,7 +184,9 @@ def _on_playback_restart(_):
                 if _fvf and _fvf_var:
                     filter_overlay.toggle_filter_vf(_fvf_var, filter_overlay._filter_vf_last_progress[0])
                 # If any peek overlay is active and we put up a pre-load black screen, lift it
-                if _bo and (_fvf or _eo or _po or _go):
+                entry = state.playback.currently_playing.get("playlist_entry")
+                drafted = isinstance(entry, dict) and entry.get("looting_effect")
+                if _bo and (_fvf or _eo or _po or _go) and (not drafted or filter_overlay._filter_vf_last):
                     round_start_guard.after(
                         50,
                         blind_screen.set_black_screen,

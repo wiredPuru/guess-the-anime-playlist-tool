@@ -59,6 +59,7 @@ except ImportError:
 # Tunnel availability (resolved at import time in web_tunnels)
 # ---------------------------------------------------------------------------
 from _app_scripts.file.web_server import web_tunnels
+from _app_scripts.file.web_server.looting_draft import LootingDraft
 from _app_scripts.file.web_server.socketio_client import SOCKET_IO_CLIENT_JS
 # Re-export availability flags: external modules read web_server.NGROK_AVAILABLE
 # / web_server.CLOUDFLARED_AVAILABLE to gate tunnel menu/settings entries.
@@ -84,6 +85,10 @@ _submitted_answers: list = []   # answers collected for the current question
 _host_messages: list = []       # host/player message thread entries
 _current_rules: dict = {}       # rules header+body shown on the waiting screen
 _connected_players: dict = {}   # sid → player name
+_looting_lock = threading.Lock()
+_looting_draft = None
+_looting_tokens = {}
+_looting_credit = None
 _player_meta: dict = {}         # sid → {'join_ms': int, 'ip': str} for host duplicate-device view
 _submitted_sids: set = set()    # SIDs that submitted in the current question
 _shadow_kicked_ips: set = set()  # IPs whose answers are silently discarded (kick)
@@ -902,6 +907,100 @@ def _eligible_vote_skip_names():
     return names
 
 
+def _looting_players():
+    """Map each eligible browser token to its latest connection."""
+    names = _connected_players.copy()
+    return {
+        token: sid for sid, token in _looting_tokens.items()
+        if sid in names and sid not in _host_sids
+        and names[sid] not in _banned_names
+        and names[sid] not in _shadow_kicked_players
+        and (_player_meta.get(sid) or {}).get('ip') not in _shadow_kicked_ips
+    }
+
+
+def _publish_looting(to_sid=None):
+    if _socketio is None:
+        return
+    draft = _looting_draft
+    online = _looting_players()
+    participants = {
+        token: sid for token, sid in online.items() if draft and token in draft.roster
+    }
+    for sid, token in list(_looting_tokens.items()):
+        if sid in _host_sids or (to_sid is not None and sid != to_sid):
+            continue
+        view = draft.view(token, participants) if participants.get(token) == sid and draft.finished is None else None
+        _socketio.emit('looting_state', view, to=sid)
+    for sid in list(_host_sids):
+        if to_sid is None or sid == to_sid:
+            _socketio.emit('looting_state', draft.view(None, participants, host=True) if draft else None, to=sid)
+
+
+def looting_notice(sid, message):
+    if _socketio is not None and sid in _host_sids:
+        _socketio.emit('looting_notice', message, to=sid)
+
+
+def push_looting_credit(name):
+    """Publish attribution only when the desktop reveals the answer."""
+    global _looting_credit
+    if name != _looting_credit:
+        _looting_credit = name
+        if _socketio is not None:
+            _socketio.emit('looting_credit', {'name': name})
+
+
+def start_looting(sid, picks, seconds, build_pool):
+    global _looting_draft
+    if type(picks) is not int or picks < 1 or type(seconds) is not int or seconds < 1:
+        raise ValueError("Enter a positive whole number for picks and time.")
+    if seconds * 1000 + 1 > 2_147_483_647:  # Tk timer delay is a signed millisecond integer.
+        raise ValueError("Draft time exceeds the supported timer range.")
+    with _looting_lock:
+        if sid not in _host_sids:
+            raise ValueError("Reconnect as host to start a draft.")
+        if _looting_draft:
+            raise ValueError("Finish or cancel the current draft first.")
+    pool = build_pool()
+    with _looting_lock:
+        if sid not in _host_sids or _looting_draft:
+            raise ValueError("The draft could not start. Refresh its status and try again.")
+        roster = {}
+        used_names = set()
+        for token, player_sid in _looting_players().items():
+            name = _connected_players.get(player_sid, '')
+            if name and name.casefold() not in used_names:
+                roster[token] = name
+                used_names.add(name.casefold())
+        _looting_draft = LootingDraft(roster, picks, seconds, pool)
+        _publish_looting()
+        return _looting_draft.id
+
+
+def finish_looting(draft_id):
+    with _looting_lock:
+        draft = _looting_draft
+        if not draft or draft.id != draft_id or draft.remaining_ms():
+            return None
+        was_active = draft.finished is None
+        entries = draft.finish()
+        if was_active:
+            _publish_looting()
+        return entries
+
+
+def close_looting(draft_id, notice=None):
+    global _looting_draft
+    with _looting_lock:
+        if _looting_draft and _looting_draft.id == draft_id:
+            _looting_draft = None
+            _publish_looting()
+            if notice:
+                for sid in list(_host_sids):
+                    looting_notice(sid, notice)
+
+
 def get_vote_skip_state(sid=None):
     """Return the current vote-skip state, personalized for one connection."""
     with _vote_skip_lock:
@@ -1577,6 +1676,7 @@ def stop():
     """Stop the HTTP listener and tunnel, then clear connection state."""
     global _ngrok_process, _cloudflared_process, _server_started, public_url
     global _http_server, _server_thread
+    global _looting_draft, _looting_credit
     _server_started = False
     public_url = None
     if _http_server is not None:
@@ -1598,6 +1698,10 @@ def stop():
         except Exception:
             pass
         _cloudflared_process = None
+    with _looting_lock:
+        _looting_draft = None
+        _looting_credit = None
+        _looting_tokens.clear()
     # Clear ephemeral connection state so the next start() is fresh.
     global _connected_players, _host_sids, _submitted_sids, _player_meta
     try:
@@ -1794,6 +1898,7 @@ def _build_app():
             emit('timer_update', _timer_state)
         if _info_public and _current_metadata:
             emit('info_public_update', {'show': True, 'metadata': _current_metadata})
+        emit('looting_credit', {'name': _looting_credit})
         emit('vote_skip_state', get_vote_skip_state(_req.sid))
         emit('emoji_status', {'muted': False, 'timed_out': False, 'timeout_until': 0, 'remaining_ms': 0})
         _emit_buzzer_state(to_sid=_req.sid)
@@ -1806,6 +1911,10 @@ def _build_app():
         _connected_players.pop(_req.sid, None)
         _player_meta.pop(_req.sid, None)
         _submitted_sids.discard(_req.sid)
+        with _looting_lock:
+            _looting_tokens.pop(_req.sid, None)
+            if _looting_draft:
+                _publish_looting()
         _broadcast_players_update()
 
     @_socketio.on('set_name')
@@ -1823,6 +1932,14 @@ def _build_app():
         else:
             _ip = _sid_client_ip(_req.sid)
             _player_meta[_req.sid] = {'join_ms': int(time.time() * 1000), 'ip': _ip, 'name': name}
+        token = data.get('looting_token')
+        if isinstance(token, str) and len(token) == 32 and all(c in '0123456789abcdef' for c in token):
+            with _looting_lock:
+                if _looting_tokens.setdefault(_req.sid, token) == token:
+                    if _looting_draft:
+                        _publish_looting()
+                    else:
+                        emit('looting_state', None)
         emit('emoji_status', _get_emoji_status(name))
         # The raw connect event happens before set_name, so this is the first
         # point where an offline player's retained skip grant can be restored.
@@ -1858,6 +1975,11 @@ def _build_app():
                 emit('toggles_update', _current_toggles)
             emit('host_messages_update', {'messages': _host_visible_messages()})
             emit('skip_grant_host_update', {'name': _skip_grant_player})
+            with _looting_lock:
+                if _looting_draft:
+                    _publish_looting()
+                else:
+                    emit('looting_state', None)
             _broadcast_players_update()
         else:
             emit('host_denied', {})
@@ -2488,6 +2610,24 @@ def _build_app():
             _host_action_callback(action, data)
         except Exception:
             pass
+
+    @_socketio.on('looting_pick')
+    def handle_looting_pick(data):
+        from flask import request as _req
+        if not isinstance(data, dict) or type(data.get('target')) is not int:
+            return
+        with _looting_lock:
+            draft = _looting_draft
+            player = _looting_tokens.get(_req.sid)
+            if (not draft or draft.id != data.get('id') or player not in draft.roster
+                    or _looting_players().get(player) != _req.sid):
+                return
+            try:
+                draft.change(player, data.get('action'), data['target'])
+            except ValueError as exc:
+                emit('looting_error', {'id': draft.id, 'message': str(exc)})
+            else:
+                _publish_looting(to_sid=_req.sid if data.get('action') == 'inspect' else None)
 
     @_socketio.on('request_youtube_list')
     def handle_request_youtube_list():

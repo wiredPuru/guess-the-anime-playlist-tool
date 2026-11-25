@@ -105,7 +105,7 @@ def should_hide_scoreboard(peek_mode):
     return bool(hide.get(peek_mode, peek_mode == "edge"))
 
 
-def _activate_peek_variant(peek_mode):
+def _activate_peek_variant(peek_mode, *, wait_for_frame=False):
     """Activate a specific peek variant by name."""
     global peek_modifier, gap_modifier
     _had_existing = bool(peek_overlay.peek_overlay1 or edge_overlay.edge_overlay_box
@@ -143,7 +143,7 @@ def _activate_peek_variant(peek_mode):
         if peek_mode not in ('blur', 'outline', 'pixelize', 'wave', 'zoom'):
             filter_overlay.toggle_filter_vf(destroy=True)
     from _app_scripts.playback import blind_screen
-    if blind_screen.black_overlay:
+    if blind_screen.black_overlay and not wait_for_frame:
         # Mirror blind()'s dismiss cleanup: tearing down the blind must also
         # remove the manual-blind progress overlay (the animated music-note bar),
         # which set_black_screen(False) alone does not destroy.
@@ -159,12 +159,15 @@ def is_peek_active():
                 or grow_overlay.grow_overlay_boxes or filter_overlay.filter_vf_active)
 
 
-def toggle_peek(toggle=None):
+def toggle_peek(toggle=None, *, variant=None, wait_for_frame=False):
     if toggle is None:
         toggle = not is_peek_active()
     destroy_peek()
     if toggle:
-        _activate_peek_variant(get_next_peek_mode())
+        if wait_for_frame:
+            _activate_peek_variant(variant or get_next_peek_mode(), wait_for_frame=True)
+        else:
+            _activate_peek_variant(variant or get_next_peek_mode())
 
 
 def destroy_peek():

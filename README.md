@@ -10,6 +10,14 @@ The app starts its built-in web server on port 8080 when it launches. On the hos
 
 To control the game from the browser, set **Host Password** in **Configuration Settings**. Enter your name and that password on the browser's join screen to unlock the host controls. Without a host password, the browser can join as a player but cannot control the game. **Auto-start Web Server** is on by default; if an existing settings file has it off, enable it once. The File menu can start or stop the server manually. Public ngrok and Cloudflare tunnels remain optional. If another device cannot connect, allow the app through your computer's firewall for private networks.
 
+## Looting Battle
+
+In the browser host controller, open **More → Queue → Looting Battle** after players join. Set the pick limit per player and the draft timer, then start. Everyone shares a record shop with three bins. Hover over a sleeve to see the anime and click to claim it. On touchscreens, tap once to preview and again to claim. Each player sees their own inventory. Inspecting a sleeve someone else claimed shows only that it was taken. To swap a pick, release it from your inventory and it returns to its original bin.
+
+The shop stocks 200 anime when the eligible library is large enough, with extra choices for larger drafts. The player count is fixed at the start. At timeout, the app fills any open slots from unclaimed anime on the board and shuffles the set. Each anime gets one playable theme, weighted 60% opening, 30% ending, and 10% insert across the types available for that anime. The board uses the configured media sources and the active playlist's content filters. The draft uses its own theme-type weights.
+
+Drafted themes queue ahead of the next regular playlist item. Each starts from the beginning with blur or pixelation. Use the normal answer reveal to remove the effect and show who looted the theme.
+
 ## Core Features
 
 ### Video Playback & Sources

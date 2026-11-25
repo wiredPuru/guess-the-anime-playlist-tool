@@ -33,10 +33,11 @@ def _queue_entries():
         ((round_data.get('theme'), 'Fixed lightning', None) for round_data in islice(rounds, fixed_start, None)),
         [(youtube.get('filename'), 'YouTube queue', youtube)] if youtube else (),
         [(search.search_queue, 'Search queue', None)] if search.search_queue else (),
+        ((entry["filename"], 'Looting Battle', None) for entry in state.playback.looting_queue),
         ((item, 'Playlist', None) for item in islice(items, start, None)),
     )
     total = max(0, len(rounds) - fixed_start) + bool(youtube) + bool(search.search_queue)
-    total += max(0, len(items) - start)
+    total += len(state.playback.looting_queue) + max(0, len(items) - start)
     return entries, total
 
 
@@ -59,6 +60,8 @@ def up_next_entry():
     if 0 <= next_round < len(rounds):
         round_data = rounds[next_round]
         return (round_data.get('theme'), 'Fixed lightning', None), f"[{round_data.get('type', '').upper()}]"
+    if state.playback.looting_queue:
+        return (state.playback.looting_queue[0]["filename"], 'Looting Battle', None), '[LOOTING BATTLE]'
     playlist = state.metadata.playlist
     items = playlist.get('playlist', [])
     position = playlist.get('current_index', -1) + 1

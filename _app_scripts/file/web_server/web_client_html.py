@@ -8,6 +8,8 @@ into the single exe with no --add-data entry or _MEIPASS path handling.
 web_server.py imports HTML and passes it to render_template_string.
 """
 
+from _app_scripts.file.web_server.looting_html import HTML as LOOTING_HTML
+
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2804,6 +2806,7 @@ HTML = r"""<!DOCTYPE html>
   <div id="host-answers-anchor-score" class="box"></div>
 
   <div id="question-box" class="box" style="display:none">
+    <div id="loot-credit" role="status" hidden></div>
     <div id="waiting">
       <div id="waiting-msg">&#9203; Waiting for next question&hellip;</div>
       <div id="waiting-rules" style="display:none"><div id="waiting-rules-inner"><div id="waiting-rules-header"></div><div id="waiting-rules-body"></div></div></div>
@@ -3292,6 +3295,7 @@ HTML = r"""<!DOCTYPE html>
         <button class="ctrl-bonus-btn ctrl-toggle-btn ctrl-sect-queue" data-extra-id="yt" onclick="_ctrlExtraClick('yt')">YouTube</button>
         <button class="ctrl-bonus-btn ctrl-toggle-btn ctrl-sect-queue" data-extra-id="yt_arc" onclick="_ctrlExtraClick('yt_arc')">&#x1F4E6;</button>
         <button class="ctrl-bonus-btn ctrl-toggle-btn ctrl-sect-queue" data-extra-id="fl" onclick="_ctrlExtraClick('fl')">Fixed</button>
+        <button class="ctrl-bonus-btn ctrl-sect-queue" data-extra-id="looting" onclick="_ctrlExtraClick('looting')">Looting Battle</button>
         <button class="ctrl-bonus-btn ctrl-toggle-btn ctrl-sect-queue" data-extra-id="search" onclick="_ctrlExtraClick('search')">&#x1F50D;</button>
         <button class="ctrl-bonus-btn ctrl-toggle-btn ctrl-sect-queue" data-extra-id="directory" onclick="_ctrlExtraClick('directory')">&#x1F4C2;</button>
         <button class="ctrl-bonus-btn ctrl-toggle-btn ctrl-sect-queue" data-extra-id="auto_reveal" onclick="_ctrlExtraClick('auto_reveal')">Auto Queue</button>
@@ -3607,8 +3611,14 @@ HTML = r"""<!DOCTYPE html>
     const socket = io();
     let selectedChoice = null;   // multiple-choice selection
     let playerName = localStorage.getItem('gta_name') || '';
+    const _lootingToken = sessionStorage.getItem('gta_looting_token') ||
+      Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    sessionStorage.setItem('gta_looting_token', _lootingToken);
+    function _sendPlayerName() {
+      socket.emit('set_name', {name: playerName, looting_token: _lootingToken});
+    }
     socket.on('connect', () => {
-      if (playerName) socket.emit('set_name', { name: playerName });
+      if (playerName) _sendPlayerName();
       const storedPw = localStorage.getItem('gta_host_pw');
       if (storedPw) { _lastClaimPw = storedPw; socket.emit('claim_host', { password: storedPw }); }
       const buzzCookie = document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('buzz_preset_index='));
@@ -3754,7 +3764,7 @@ HTML = r"""<!DOCTYPE html>
       if (!v) return;
       playerName = v;
       localStorage.setItem('gta_name', playerName);
-      socket.emit('set_name', { name: playerName });
+      _sendPlayerName();
       const pw = document.getElementById('host-pw-input').value.trim();
       if (pw) {
         localStorage.setItem('gta_host_pw', pw);
@@ -3828,7 +3838,7 @@ HTML = r"""<!DOCTYPE html>
       if (ni) ni.value = playerName;
       _updateLabelSwatch();
       // Re-assert name on the socket for consistency after reconnect races.
-      socket.emit('set_name', { name: playerName });
+      _sendPlayerName();
     });
     function showQuestionBox() {
       document.getElementById('name-screen').style.display = 'none';
@@ -10171,6 +10181,7 @@ HTML = r"""<!DOCTYPE html>
       'yt':           { classes: 'ctrl-toggle-btn ctrl-sect-queue',           html: 'YouTube',   title: 'YouTube videos', serverCtrl: true },
       'yt_arc':       { classes: 'ctrl-toggle-btn ctrl-sect-queue',           html: '&#x1F4E6;', title: 'Archived YouTube videos', serverCtrl: true },
       'fl':           { classes: 'ctrl-toggle-btn ctrl-sect-queue',           html: 'Fixed',     title: 'Fixed lightning rounds', serverCtrl: true },
+      'looting':      { classes: 'ctrl-sect-queue',                           html: 'Looting Battle', title: 'Draft a set of anime with players', serverCtrl: true },
       'search':       { classes: 'ctrl-toggle-btn ctrl-sect-queue',           html: '&#x1F50D;', title: 'Search themes' },
       'directory':    { classes: 'ctrl-toggle-btn ctrl-sect-queue',           html: '&#x1F4C2;', title: 'Browse directory (by artist, season, series…)' },
       'auto_reveal':  { classes: 'ctrl-toggle-btn ctrl-sect-queue',           html: 'Auto Queue', title: 'Auto-queue a Blind / Reveal / Mute Reveal round at the start of each theme (by popularity or a fixed type)' },
@@ -10248,6 +10259,7 @@ HTML = r"""<!DOCTYPE html>
       'yt':           () => { _ctrlCloseExtrasPopup(); _ctrlToggleYouTubeList(); },
       'yt_arc':       () => { _ctrlCloseExtrasPopup(); _ctrlToggleArchivedYouTubeList(); },
       'fl':           () => { _ctrlCloseExtrasPopup(); _ctrlToggleFlList(); },
+      'looting':      () => { _ctrlCloseExtrasPopup(); window.openLootingBattle(); },
       'search':       () => { _ctrlCloseExtrasPopup(); _ctrlToggleSearchRow(); },
       'directory':    () => { _ctrlCloseExtrasPopup(); _ctrlToggleDirectoryList(); },
       'b_multiple':   () => { socket.emit('host_action',{action:'invoke',id:'bonus_multiple'}); },
@@ -12195,3 +12207,5 @@ HTML = r"""<!DOCTYPE html>
   </script>
 </body>
 </html>"""
+
+HTML = HTML.replace("</body>", LOOTING_HTML + "</body>")

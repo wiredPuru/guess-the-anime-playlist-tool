@@ -161,6 +161,7 @@ def stop():
     state.lightning.fixed_lightning_queue = None
     state.lightning.fixed_lightning_round_playlist_data = None
     state.lightning.fixed_current_round = None
+    state.playback.looting_queue.clear()
     search_ops.search_queue = None
     youtube_ui.unload_youtube_video()
     bonus.guess_extra()
@@ -186,6 +187,7 @@ def stop_all_queues():
     # Clear search queue
     if search_ops.search_queue:
         search_ops.search_queue = None
+    state.playback.looting_queue.clear()
     # Clear fixed lightning (queued and/or currently active playlist)
     if state.lightning.fixed_lightning_queue or state.lightning.fixed_lightning_round_playlist_data:
         fl_name = (state.lightning.fixed_lightning_queue or state.lightning.fixed_lightning_round_playlist_data or {}).get("name")
@@ -228,7 +230,7 @@ def _pre_mute_incoming_lightning_media():
     return should_mute
 
 
-def _load_incoming_media(filepath, start_seconds=None):
+def _load_incoming_media(filepath, start_seconds=None, *, cover_reveal=False):
     """Apply the startup safety cover/audio policy before loading media.
 
     Mode-specific lightning setup still happens in ``update_light_round``.
@@ -237,7 +239,8 @@ def _load_incoming_media(filepath, start_seconds=None):
     """
     light_mode = state.lightning.light_mode
     queued_manual_cover = (
-        blind_screen.blind_round_toggle
+        cover_reveal
+        or blind_screen.blind_round_toggle
         or peek_dispatch.peek_round_toggle
         or peek_dispatch.mute_peek_round_toggle
     )
@@ -247,7 +250,7 @@ def _load_incoming_media(filepath, start_seconds=None):
     elif queued_manual_cover:
         pre_load_color = (
             censors.get_image_color()
-            if blind_screen.blind_round_toggle
+            if blind_screen.blind_round_toggle and not cover_reveal
             else "black"
         )
         blind_screen.set_black_screen(
@@ -372,6 +375,13 @@ def update_current_index(value = None, save = True):
         pass  # root isn't defined yet â€” possibly too early in startup
 
 
+def queue_looting_songs(entries):
+    """Queue drafted themes ahead of the next regular playlist item."""
+    state.playback.looting_queue.extend(entries)
+    metadata_display.up_next_text()
+    threading.Thread(target=cache_download.prefetch_next_themes, daemon=True).start()
+
+
 def play_video(index=-1, *, explicit_file=False):  # def-time default was BLANK_PLAYLIST["current_index"] == -1
     """Function to play a specific video by index"""
     global playlist_loaded, playing_next_error
@@ -404,7 +414,7 @@ def play_video(index=-1, *, explicit_file=False):  # def-time default was BLANK_
     if session_end.end_message_window:
         session_end.toggle_end_message()
 
-    if state.metadata.playlist["current_index"] < len(state.metadata.playlist["playlist"]) and index + 1 >= len(state.metadata.playlist["playlist"]) and not state.playback.youtube_queue and not search_ops.search_queue and not state.lightning.fixed_lightning_queue:
+    if state.metadata.playlist["current_index"] < len(state.metadata.playlist["playlist"]) and index + 1 >= len(state.metadata.playlist["playlist"]) and not state.playback.youtube_queue and not search_ops.search_queue and not state.lightning.fixed_lightning_queue and not state.playback.looting_queue:
         infinite._promote_or_generate_next()
     
     if state.lightning.fixed_lightning_queue or state.lightning.fixed_lightning_round_playlist_data:
@@ -541,6 +551,12 @@ def play_video(index=-1, *, explicit_file=False):  # def-time default was BLANK_
         metadata_display.up_next_text()
         if "SEARCH QUEUE" in state.playback.popout_buttons_by_name:
             lists.button_seleted(state.playback.popout_buttons_by_name["SEARCH QUEUE"], False)
+    elif state.playback.looting_queue and state.seek.skip_direction >= 0:
+        lightning_manager.unselect_light_modes()
+        entry = state.playback.looting_queue.pop(0)
+        if play_filename(entry):
+            state.widgets.root.after(3000, thread_prefetch_metadata)
+        metadata_display.up_next_text()
     elif 0 <= index < len(state.metadata.playlist["playlist"]):
         same_index = index == state.metadata.playlist["current_index"]
         update_current_index(index)
@@ -598,7 +614,7 @@ def play_video(index=-1, *, explicit_file=False):  # def-time default was BLANK_
             messagebox.showinfo("Playlist Error", "Invalid playlist index.")
         return
     
-    if state.metadata.playlist["current_index"]+1 < len(state.metadata.playlist["playlist"]):
+    if not state.playback.looting_queue and state.metadata.playlist["current_index"]+1 < len(state.metadata.playlist["playlist"]):
         next_filename = entry_paths.get_clean_filename(state.metadata.playlist["playlist"][state.metadata.playlist["current_index"]+1])
         state.widgets.root.after(1000, check_next_queue_round, next_filename)
     add_session_history()
@@ -613,6 +629,7 @@ def skip_filename():
     next_index = state.metadata.playlist["current_index"] + state.seek.skip_direction
     if (not state.lightning.fixed_lightning_round_playlist_data
             and not state.lightning.fixed_lightning_queue
+            and not state.playback.looting_queue
             and not search_ops.search_queue
             and not state.metadata.playlist.get("infinite")
             and not 0 <= next_index < len(state.metadata.playlist["playlist"])):
@@ -657,6 +674,9 @@ def play_filename(playlist_entry, fullscreen=True):
     from core.app_logging import watch_for_stall
     with watch_for_stall(f"Resolve theme playback: {playlist_entry}"):
         playlist_entry = cache_download.select_theme_entry(playlist_entry)
+        looting_effect = playlist_entry.get("looting_effect") if isinstance(playlist_entry, dict) else None
+        if looting_effect and state.lightning.light_mode:
+            lightning_manager.unselect_light_modes()
         _pe_str = playlist_entry.get('filename', playlist_entry.get('filepath', '')) if isinstance(playlist_entry, dict) else playlist_entry
         filename = entry_paths.get_clean_filename(_pe_str)
         data = metadata_fetch.get_metadata(_pe_str, fetch=state.config.auto_fetch_missing)
@@ -723,7 +743,7 @@ def play_filename(playlist_entry, fullscreen=True):
     censors.on_play_starting()
     if variety_round.variety_light_mode_enabled:
         variety_round.set_variety_light_mode()
-    if state.controls.auto_info_start:
+    if state.controls.auto_info_start and not looting_effect:
         information_popup.toggle_title_popup(True)
     if state.controls.auto_bonus_start and not (state.lightning.fixed_current_round and state.lightning.fixed_current_round.get("mc_choice_2")):
         pick = bonus._pick_random_bonus() if state.controls.auto_bonus_start == "random" else state.controls.auto_bonus_start
@@ -743,7 +763,7 @@ def play_filename(playlist_entry, fullscreen=True):
     # the auto default for that one round. armed_auto_reveal gates the timed
     # uncover/fade kicked off when the queued round is consumed below.
     armed_auto_reveal = False
-    if (state.controls.auto_reveal_start and not state.lightning.light_mode
+    if (state.controls.auto_reveal_start and not looting_effect and not state.lightning.light_mode
             and not blind_screen.blind_round_toggle
             and not peek_dispatch.peek_round_toggle
             and not peek_dispatch.mute_peek_round_toggle):
@@ -765,8 +785,10 @@ def play_filename(playlist_entry, fullscreen=True):
     # Update metadata display asynchronously
     metadata_display.update_metadata_queue(state.metadata.playlist["current_index"])
     state.playback.previous_media = filepath  # store path string for repeat playback
-    start_skip_end = censors.get_start_skip_end(filename)
-    _load_incoming_media(filepath, start_seconds=start_skip_end)
+    if looting_effect:
+        _load_incoming_media(filepath, start_seconds=0, cover_reveal=True)
+    else:
+        _load_incoming_media(filepath, start_seconds=censors.get_start_skip_end(filename))
     censors.reset_for_new_file(filename)
     if state.lightning.light_mode:
         if "c." in state.lightning.light_mode:
@@ -799,7 +821,11 @@ def play_filename(playlist_entry, fullscreen=True):
         osd_text.set_countdown()
         lightning_manager.set_light_round_number()
         coming_up_ui.toggle_coming_up_popup(False, "Lightning Round")
-        if blind_screen.blind_round_toggle:
+        if looting_effect:
+            blind_screen.manual_blind = False
+            peek_dispatch.toggle_peek(True, variant=looting_effect, wait_for_frame=True)
+            round_start_guard.after(500, player_play)
+        elif blind_screen.blind_round_toggle:
             blind_screen.manual_blind = True
             if armed_auto_reveal:
                 peek_dispatch.start_timed_reveal(
@@ -837,7 +863,7 @@ def play_filename(playlist_entry, fullscreen=True):
         if state.controls.autoplay_toggle != 3:
             state.widgets.root.after(retry_delay, play_video_retry, 5, filename)  # Retry playback
     
-    if state.metadata.playlist.get("infinite", False):
+    if state.metadata.playlist.get("infinite", False) and not looting_effect:
         lightning_changed = False
         current_entry = state.metadata.playlist["playlist"][state.metadata.playlist["current_index"]]
         if not state.lightning.fixed_current_round and state.playback.currently_playing.get("filename") == entry_paths.get_clean_filename(current_entry):
@@ -987,6 +1013,8 @@ def play_next():
         play_video(state.metadata.playlist["current_index"])
     elif state.lightning.fixed_lightning_round_playlist_data or state.lightning.fixed_lightning_queue:
         play_video(state.metadata.playlist["current_index"])
+    elif state.playback.looting_queue:
+        play_video(state.metadata.playlist["current_index"] + 1)
     else:
         if state.metadata.playlist["current_index"] + 1 >= len(state.metadata.playlist["playlist"]):
             infinite._promote_or_generate_next()

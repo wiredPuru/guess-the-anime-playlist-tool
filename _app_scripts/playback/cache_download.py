@@ -1383,20 +1383,21 @@ def prefetch_next_themes():
     MAX_NEW_DOWNLOADS = 2
 
     playlist = state.metadata.playlist
-    if not playlist.get("playlist"):
-        return
-
     current_idx    = playlist.get("current_index", 0)
-    playlist_items = playlist["playlist"]
+    playlist_items = playlist.get("playlist", [])
+    if not playlist_items and not state.playback.looting_queue:
+        return
 
     upcoming = []
     # search_queue plays before the playlist next, so prefetch it first
     sq = search_ops.search_queue
     if sq:
         upcoming.append(sq)
-    for i in range(1, MAX_LOOKAHEAD + 1):
-        next_idx = (current_idx + i) % len(playlist_items)
-        upcoming.append(playlist_items[next_idx])
+    upcoming.extend(state.playback.looting_queue[:MAX_LOOKAHEAD])
+    if playlist_items:
+        for i in range(1, MAX_LOOKAHEAD + 1):
+            next_idx = (current_idx + i) % len(playlist_items)
+            upcoming.append(playlist_items[next_idx])
     for tail_entry in playlist.get("speculative_tail", []):
         upcoming.append(tail_entry)
 

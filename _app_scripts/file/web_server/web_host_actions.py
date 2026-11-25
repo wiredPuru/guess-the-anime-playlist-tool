@@ -16,7 +16,7 @@ from core.app_logging import get_logger
 from core.game_state import state
 import _app_scripts.file.web_server.web_server as web_server
 import _app_scripts.file.web_server.web_search as web_search
-from _app_scripts.file.web_server import web_video_queue
+from _app_scripts.file.web_server import looting_draft, web_video_queue
 import _app_scripts.queue_round.lightning_rounds.peek_dispatch as peek_dispatch
 import _app_scripts.queue_round.lightning_rounds.frame_round as frame_round
 import _app_scripts.playback.music as music
@@ -205,6 +205,41 @@ def wire_web_server():
         'buzzer', bonus.BONUS_SETTINGS_DEFAULT['buzzer']).get('multi_buzz', False)))
 
 
+_looting_start_lock = threading.Lock()
+
+
+def _start_looting(data):
+    sid = data['_sid']
+    if not _looting_start_lock.acquire(blocking=False):
+        web_server.looting_notice(sid, "Preparing the draft board…")
+        return
+
+    def prepare():
+        try:
+            draft_id = web_server.start_looting(
+                sid, data.get('picks'), data.get('seconds'), looting_draft.library_pool
+            )
+            state.widgets.root.after(data['seconds'] * 1000 + 1, _queue_looting_if_available, draft_id, sid)
+        except ValueError as exc:
+            web_server.looting_notice(sid, str(exc))
+        except Exception:
+            get_logger().exception("Could not prepare Looting Battle")
+            web_server.looting_notice(sid, "Couldn't prepare the draft. Check the host log.")
+        finally:
+            _looting_start_lock.release()
+
+    web_server.looting_notice(sid, "Preparing the draft board…")
+    threading.Thread(target=prepare, daemon=True).start()
+
+
+def _queue_looting_if_available(draft_id, sid):
+    themes = web_server.finish_looting(draft_id)
+    if themes is None:
+        return
+    transport.queue_looting_songs(themes)
+    web_server.close_looting(draft_id, f"Looting Battle queued with {len(themes)} songs.")
+
+
 def _handle_host_action(action: str, data: dict):
     """Dispatch remote control commands from the web host controller."""
     _received = time.monotonic()
@@ -383,6 +418,12 @@ def _handle_host_action(action: str, data: dict):
                 video = youtube_ui.get_youtube_metadata_from_index(key_id=video_id)
                 youtube_ui._set_youtube_queue(video)
                 metadata_display.up_next_text()
+        elif action == 'start_looting':
+            _start_looting(data)
+        elif action == 'queue_looting':
+            _queue_looting_if_available(data.get('id'), data['_sid'])
+        elif action == 'cancel_looting':
+            web_server.close_looting(data.get('id'), "Looting Battle canceled.")
         elif action == 'get_fixed_lightning_list':
             fixed_lightning_actions.load_fixed_lightning_rounds(filter_missing_themes=True)
             rounds = []

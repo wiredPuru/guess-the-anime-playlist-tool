@@ -676,7 +676,7 @@ def update_up_next_display(widget, clear=False):
             fixed_rounds = fixed_data.get("rounds", []) if fixed_data else []
             fixed_current_index = fixed_data.get("current_index", -1) if fixed_data else -1
             fixed_coming_up = fixed_data and (fixed_current_index + 1) < len(fixed_rounds)
-            if state.playback.youtube_queue or search_ops.search_queue or fixed_coming_up or state.metadata.playlist["current_index"] + 1 < len(state.metadata.playlist["playlist"]):
+            if state.playback.youtube_queue or search_ops.search_queue or fixed_coming_up or state.playback.looting_queue or state.metadata.playlist["current_index"] + 1 < len(state.metadata.playlist["playlist"]):
                 try:
                     if state.playback.youtube_queue:
                         playlist_entry = state.playback.youtube_queue.get("filename")
@@ -687,6 +687,9 @@ def update_up_next_display(widget, clear=False):
                         playlist_entry = next_round.get("theme")
                         next_mode = next_round.get("type")
                         widget.insert(tk.END, f"[{next_mode.upper()}] ", "white")
+                    elif state.playback.looting_queue:
+                        playlist_entry = state.playback.looting_queue[0]["filename"]
+                        widget.insert(tk.END, "[LOOTING BATTLE] ", "white")
                     else:
                         playlist_entry = state.metadata.playlist["playlist"][state.metadata.playlist["current_index"] + 1]
                     next_filename = entry_paths.get_clean_filename(playlist_entry)
@@ -722,6 +725,8 @@ def update_up_next_display(widget, clear=False):
                         next_up_text = state.playback.youtube_queue.get("filename")
                     elif search_ops.search_queue:
                         next_up_text = entry_paths.get_clean_filename(search_ops.search_queue)
+                    elif state.playback.looting_queue and not fixed_coming_up:
+                        next_up_text = entry_paths.get_clean_filename(state.playback.looting_queue[0]["filename"])
                     else:
                         playlist_entry = state.metadata.playlist["playlist"][state.metadata.playlist["current_index"] + 1]
                         next_up_text = entry_paths.get_clean_filename(playlist_entry)

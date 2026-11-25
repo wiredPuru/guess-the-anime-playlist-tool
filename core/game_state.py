@@ -47,6 +47,7 @@ class GameState:
         # contract, same as metadata).
         self.playback = SimpleNamespace(
             youtube_queue=None,
+            looting_queue=[],
             previous_media=None,            # last played media path (string) for repeat playback
 
             currently_playing={},
